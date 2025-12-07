@@ -1,0 +1,214 @@
+/**************************************************************************
+ *  CONTROLADOR HIERÁRQUICO – ROBÔ 4WD (Simulação Realista - Tinkercad)
+ *  - Usa encoder virtual (pulsos dependem do PWM u)
+ *  - Controlador P2P → Cinemática → 4 PIs
+ *  - Totalmente compatível com Arduino UNO
+ **************************************************************************/
+
+// ============================ PARÂMETROS FÍSICOS =============================
+const float R = 0.045;     // raio da roda (m)
+const float L = 0.29;      // distância entre eixos (m)
+const float CPR = 600.0;   // contagem por volta do encoder real
+
+// ============================ PINOS (não usados no Tinkercad) ===============
+int IN1[4] = {2,3,4,5};
+int IN2[4] = {6,7,8,9};
+int ENA[4] = {10,11,12,13};
+
+// ====================== VARIÁVEIS DO CONTROLE ===============================
+float w_ref[4] = {0, 0, 0, 0};
+float w_meas[4] = {0, 0, 0, 0};
+
+// PI gains
+float Kp = 4.0;
+float Ki = 15.0;
+float inte[4] = {0, 0, 0, 0};
+
+// Comando final de motor (simulado)
+float u_cmd[4] = {0,0,0,0};
+
+// Odometria
+float x = 0, y = 0, theta = 0;
+
+// Alvo (testes)
+float x_ref = 1.0;
+float y_ref = 0.0;
+
+// ============================ ENCODERS (simulados) ============================
+volatile long encoderCount[4] = {0, 0, 0, 0};
+
+
+// ============================================================================
+//                  SIMULAÇÃO REALISTA DO MOTOR + ENCODER
+//    - Pulsos dependem de u_cmd
+//    - Considera atrito
+// ============================================================================
+void simularPulsos()
+{
+    static unsigned long last = 0;
+    if (millis() - last < 10) return;   // 100 Hz
+    last = millis();
+
+    for (int m = 0; m < 4; m++)
+    {
+        // Converte comando -255..255 para rad/s simulado
+        float w = (u_cmd[m] / 255.0) * 20.0; // velocidade máxima ~20 rad/s
+
+        // Simula atrito proporcional
+        if (abs(u_cmd[m]) < 15) w = 0;
+
+        // Converte rad/s → pulsos em 10 ms
+        float rev = (w * 0.01) / (2 * PI);
+        long pulses = rev * CPR;
+
+        encoderCount[m] += pulses;
+    }
+}
+
+
+// ============================================================================
+//                       CINEMÁTICA INVERSA 4WD DIFERENCIAL
+// ============================================================================
+void inverse_kinematics(float v, float w)
+{
+    float wl = (v - w * (L/2)) / R;
+    float wr = (v + w * (L/2)) / R;
+
+    w_ref[0] = wl;  // frente esquerda
+    w_ref[2] = wl;  // trás esquerda
+    w_ref[1] = wr;  // frente direita
+    w_ref[3] = wr;  // trás direita
+}
+
+
+// ============================================================================
+//                        CONTROLADOR DE POSIÇÃO (P2P)
+// ============================================================================
+void position_controller()
+{
+    float ex = x_ref - x;
+    float ey = y_ref - y;
+
+    float dist = sqrt(ex*ex + ey*ey);
+
+    // Controle linear
+    float v = 1.5 * dist;
+    if (v > 0.5) v = 0.5;
+
+    // Controle angular
+    float desired_theta = atan2(ey, ex);
+    float e_theta = desired_theta - theta;
+
+    // Normalizar ângulo
+    while (e_theta > PI) e_theta -= 2*PI;
+    while (e_theta < -PI) e_theta += 2*PI;
+
+    float w = 3.0 * e_theta;
+
+    inverse_kinematics(v, w);
+}
+
+
+// ============================================================================
+//            CONVERSÃO DE PULSOS → VELOCIDADE MEDIDA DOS MOTORES
+// ============================================================================
+void update_encoder_velocity()
+{
+    static long lastCount[4] = {0,0,0,0};
+
+    for (int m = 0; m < 4; m++)
+    {
+        long diff = encoderCount[m] - lastCount[m];
+        lastCount[m] = encoderCount[m];
+
+        float rev = diff / CPR;
+        float rad = rev * 2 * PI;
+
+        // rad/s em janela de 10 ms
+        w_meas[m] = rad / 0.01;
+    }
+}
+
+
+// ============================================================================
+//                                ODOMETRIA
+// ============================================================================
+void update_odometry()
+{
+    float wl = (w_meas[0] + w_meas[2]) / 2.0;
+    float wr = (w_meas[1] + w_meas[3]) / 2.0;
+
+    float v = (R/2.0) * (wl + wr);
+    float w = (R/L) * (wr - wl);
+
+    x     += v * cos(theta) * 0.01;
+    y     += v * sin(theta) * 0.01;
+    theta += w * 0.01;
+
+    // Normaliza orientação
+    if (theta > PI) theta -= 2*PI;
+    if (theta < -PI) theta += 2*PI;
+}
+
+
+// ============================================================================
+//                   CONTROLADOR PI INDIVIDUAL (simulado)
+// ============================================================================
+void update_PI(int m)
+{
+    float error = w_ref[m] - w_meas[m];
+    inte[m] += error * 0.01;
+
+    float u = Kp * error + Ki * inte[m];
+
+    // Saturação
+    if (u > 255) u = 255;
+    if (u < -255) u = -255;
+
+    u_cmd[m] = u;
+
+    Serial.print("M");
+    Serial.print(m);
+    Serial.print(": ");
+    Serial.print(u);
+    Serial.print("  ");
+}
+
+
+// ============================================================================
+//                                  SETUP
+// ============================================================================
+void setup()
+{
+    Serial.begin(115200);
+    Serial.println("=== Simulação Realista do Controlador 4WD iniciada ===");
+}
+
+
+// ============================================================================
+//                                    LOOP
+// ============================================================================
+void loop()
+{
+    simularPulsos();  // simula comportamento dos motores
+
+    static unsigned long last = 0;
+    if (millis() - last >= 10)
+    {
+        last = millis();
+
+        position_controller();
+        update_encoder_velocity();
+        update_odometry();
+
+        for (int m = 0; m < 4; m++)
+            update_PI(m);
+
+        Serial.print(" | Pos: x=");
+        Serial.print(x, 2);
+        Serial.print("  y=");
+        Serial.print(y, 2);
+        Serial.print("  θ=");
+        Serial.println(theta, 2);
+    }
+}
