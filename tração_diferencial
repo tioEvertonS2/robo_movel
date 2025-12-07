@@ -1,6 +1,6 @@
 /**************************************************************************
  * FIRMWARE ROBÔ MÓVEL - PROJETO 2 (2025/2)
- * - Versão: TRAÇÃO DIFERENCIAL (4WD Skid-Steer)
+ * - TRAÇÃO DIFERENCIAL (4WD Skid-Steer)
  * - Controle: Posição (Polar) -> Velocidade (PI)
  * - Interface Serial: Comandos SET e LOG
  **************************************************************************/
@@ -8,13 +8,12 @@
 #include <math.h>
 
 // ================= CONFIGURAÇÕES FÍSICAS =================
-// Ajuste com sua régua!
-const float R = 0.045;       // Raio da roda (m)
-const float L_track = 0.29;  // Distância entre rodas esquerda e direita (bitola)
-const float CPR = 600.0;     // Pulsos por volta do encoder
+const float R = 0.066;       // Raio da roda (m)
+const float L_track = 0.10;  // Distância entre rodas esquerda e direita (bitola)
+const float CPR = 20.0;     // Pulsos por volta do encoder
 
-// Mapeamento de Pinos (Arduino UNO/Mega)
-// Certifique-se que ENA/ENB são pinos PWM
+// Mapeamento de Pinos (Arduino UNO)
+// ENA/ENB são pinos PWM
 const int PIN_PWM[4] = {10, 11, 12, 13}; 
 const int PIN_DIR1[4] = {2, 4, 6, 8};    
 const int PIN_DIR2[4] = {3, 5, 7, 9};    
@@ -29,17 +28,17 @@ float pwm_cmd[4] = {0, 0, 0, 0};
 
 // Odometria (X, Y, Theta)
 float pose[3] = {0, 0, 0}; 
-float pose_ref[3] = {0, 0, 0}; // Meta
+float pose_ref[3] = {0, 0, 0}; // Destino
 
-// GANHOS (Preencher após passo de identificação)
+// GANHOS
 // Ganhos PI de Velocidade (Requisito: Ts < 100ms)
-float Kp_vel = 4.0;  // <-- AJUSTAR
-float Ki_vel = 15.0; // <-- AJUSTAR
+float Kp_vel = 0.0;  // <-- AJUSTAR
+float Ki_vel = 0.0; // <-- AJUSTAR
 float error_integral[4] = {0, 0, 0, 0};
 
 // Ganhos de Posição (P)
-float Kp_dist = 1.5; // Ganho de aproximação
-float Kp_head = 4.0; // Ganho de orientação
+float Kp_dist = 0; // Ganho de aproximação
+float Kp_head = 0; // Ganho de orientação
 
 // Variáveis de Sistema
 unsigned long last_time = 0;
@@ -60,7 +59,6 @@ float saturate(float val, float limit) {
 
 // Cinemática Inversa: (v, w) -> (w_left, w_right)
 void inverseKinematics(float v, float w) {
-  // Para robô diferencial:
   // w_left = (v - w * L/2) / R
   // w_right = (v + w * L/2) / R
   
@@ -113,7 +111,7 @@ void runSpeedControl(float dt) {
 }
 
 // Controlador de Posição (Requisito 2.b)
-// Estratégia para Diferencial: Controlar Distância e Orientação
+// Controlar Distância e Orientação
 void runPositionControl() {
   float dx = pose_ref[0] - pose[0];
   float dy = pose_ref[1] - pose[1];
@@ -156,7 +154,6 @@ void runPositionControl() {
 }
 
 // ================= SIMULAÇÃO & MAIN =================
-// (Mantive a função de simulação para você testar a lógica sem o robô)
 void simulateHardware(float dt) {
   float tau = 0.15; // Constante de tempo estimada
   float K_model = 0.12; // Ganho (rad/s por PWM)
@@ -172,8 +169,7 @@ void simulateHardware(float dt) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("ROBO DIFERENCIAL 2025/2 - PRONTO");
-  // Configurar pinos de motor e encoder aqui
+  Serial.println("ROBO DIFERENCIAL 2025/2");
 }
 
 void loop() {
