@@ -9,7 +9,7 @@
 
 // ================= CONFIGURAÇÕES FÍSICAS =================
 const float R = 0.066;       // Raio da roda (m)
-const float L_track = 0.10;  // Distância entre rodas esquerda e direita (bitola)
+const float L_track = 0.10;  // Distância entre rodas esquerda e direita
 const float CPR = 20.0;     // Pulsos por volta do encoder
 
 // Mapeamento de Pinos (Arduino UNO)
@@ -32,13 +32,13 @@ float pose_ref[3] = {0, 0, 0}; // Destino
 
 // GANHOS
 // Ganhos PI de Velocidade (Requisito: Ts < 100ms)
-float Kp_vel = 0.0;  // <-- AJUSTAR
-float Ki_vel = 0.0; // <-- AJUSTAR
+float Kp_vel = 1.94; 
+float Ki_vel = 5.31;
 float error_integral[4] = {0, 0, 0, 0};
 
 // Ganhos de Posição (P)
-float Kp_dist = 0; // Ganho de aproximação
-float Kp_head = 0; // Ganho de orientação
+float Kp_dist = 2.0; // Ganho de aproximação
+float Kp_head = 4.0; // Ganho de orientação
 
 // Variáveis de Sistema
 unsigned long last_time = 0;
@@ -182,7 +182,7 @@ void loop() {
     if (simulation_mode) {
       simulateHardware(dt);
     } else {
-      // LEITURA REAL DOS ENCODERS AQUI
+      // LEITURA REAL DOS ENCODERS
       // calculateEncoderSpeeds();
     }
     
