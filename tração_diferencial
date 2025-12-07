@@ -1,0 +1,259 @@
+/**************************************************************************
+ * FIRMWARE ROBÔ MÓVEL - PROJETO 2 (2025/2)
+ * - Versão: TRAÇÃO DIFERENCIAL (4WD Skid-Steer)
+ * - Controle: Posição (Polar) -> Velocidade (PI)
+ * - Interface Serial: Comandos SET e LOG
+ **************************************************************************/
+
+#include <math.h>
+
+// ================= CONFIGURAÇÕES FÍSICAS =================
+// Ajuste com sua régua!
+const float R = 0.045;       // Raio da roda (m)
+const float L_track = 0.29;  // Distância entre rodas esquerda e direita (bitola)
+const float CPR = 600.0;     // Pulsos por volta do encoder
+
+// Mapeamento de Pinos (Arduino UNO/Mega)
+// Certifique-se que ENA/ENB são pinos PWM
+const int PIN_PWM[4] = {10, 11, 12, 13}; 
+const int PIN_DIR1[4] = {2, 4, 6, 8};    
+const int PIN_DIR2[4] = {3, 5, 7, 9};    
+
+// ================= VARIÁVEIS DE CONTROLE =================
+// Referências Globais
+float v_lin_ref = 0;   // Velocidade linear (m/s)
+float w_ang_ref = 0;   // Velocidade angular (rad/s)
+float w_motor_ref[4] = {0, 0, 0, 0};
+float w_motor_meas[4] = {0, 0, 0, 0};
+float pwm_cmd[4] = {0, 0, 0, 0};
+
+// Odometria (X, Y, Theta)
+float pose[3] = {0, 0, 0}; 
+float pose_ref[3] = {0, 0, 0}; // Meta
+
+// GANHOS (Preencher após passo de identificação)
+// Ganhos PI de Velocidade (Requisito: Ts < 100ms)
+float Kp_vel = 4.0;  // <-- AJUSTAR
+float Ki_vel = 15.0; // <-- AJUSTAR
+float error_integral[4] = {0, 0, 0, 0};
+
+// Ganhos de Posição (P)
+float Kp_dist = 1.5; // Ganho de aproximação
+float Kp_head = 4.0; // Ganho de orientação
+
+// Variáveis de Sistema
+unsigned long last_time = 0;
+volatile long encoder_ticks[4] = {0, 0, 0, 0};
+bool simulation_mode = true; // Mude para false no robô real
+
+// Modos de Operação
+enum Mode { IDLE, OPEN_LOOP, VEL_CONTROL, POS_CONTROL };
+Mode current_mode = IDLE;
+
+// ================= FUNÇÕES AUXILIARES =================
+
+float saturate(float val, float limit) {
+  if (val > limit) return limit;
+  if (val < -limit) return -limit;
+  return val;
+}
+
+// Cinemática Inversa: (v, w) -> (w_left, w_right)
+void inverseKinematics(float v, float w) {
+  // Para robô diferencial:
+  // w_left = (v - w * L/2) / R
+  // w_right = (v + w * L/2) / R
+  
+  float wl = (v - w * (L_track / 2.0)) / R;
+  float wr = (v + w * (L_track / 2.0)) / R;
+
+  // Motores Esquerdos (0 e 2)
+  w_motor_ref[0] = wl; 
+  w_motor_ref[2] = wl;
+  
+  // Motores Direitos (1 e 3)
+  w_motor_ref[1] = wr;
+  w_motor_ref[3] = wr;
+}
+
+// Cinemática Direta: (w_motors) -> (v, w)
+void forwardKinematics(float wm[4], float &v, float &w) {
+  // Média das esquerdas e direitas
+  float wl_avg = (wm[0] + wm[2]) / 2.0;
+  float wr_avg = (wm[1] + wm[3]) / 2.0;
+  
+  v = (R / 2.0) * (wl_avg + wr_avg);
+  w = (R / L_track) * (wr_avg - wl_avg);
+}
+
+// ================= CONTROLADORES =================
+
+// Controlador de Velocidade (Requisito 2.a e 2.d)
+void runSpeedControl(float dt) {
+  for (int i = 0; i < 4; i++) {
+    float error = w_motor_ref[i] - w_motor_meas[i];
+    
+    // PI com Anti-Windup Clamping
+    float P = Kp_vel * error;
+    float integral_attempt = error_integral[i] + (error * dt);
+    
+    // Saída bruta
+    float u = P + Ki_vel * integral_attempt;
+    
+    // Verifica saturação (PWM max 255)
+    if (u > 255 || u < -255) {
+      // Se saturou, não acumula o erro (Clamping)
+      // Mantém integral anterior
+    } else {
+      error_integral[i] = integral_attempt;
+    }
+    
+    pwm_cmd[i] = saturate(P + Ki_vel * error_integral[i], 255.0);
+  }
+}
+
+// Controlador de Posição (Requisito 2.b)
+// Estratégia para Diferencial: Controlar Distância e Orientação
+void runPositionControl() {
+  float dx = pose_ref[0] - pose[0];
+  float dy = pose_ref[1] - pose[1];
+  float dist_error = sqrt(dx*dx + dy*dy);
+  
+  // 1. Calcular ângulo desejado
+  float target_angle = atan2(dy, dx);
+  float head_error = target_angle - pose[2];
+  
+  // Normalizar ângulo (-pi a +pi)
+  while (head_error > PI) head_error -= 2*PI;
+  while (head_error < -PI) head_error += 2*PI;
+  
+  // Lógica de Comportamento
+  float v_cmd = 0;
+  float w_cmd = 0;
+
+  if (dist_error > 0.05) { // Se longe do alvo (>5cm)
+     // Controle Proporcional
+     // Se erro angular for grande, gira primeiro (prioridade giro)
+     if (abs(head_error) > 0.5) {
+       v_cmd = 0; // Para para girar
+       w_cmd = Kp_head * head_error;
+     } else {
+       // Se alinhado, anda e corrige suavemente
+       v_cmd = Kp_dist * dist_error;
+       w_cmd = Kp_head * head_error;
+     }
+  } else {
+     // Chegou
+     v_cmd = 0;
+     w_cmd = 0;
+  }
+  
+  // Saturações de segurança
+  v_cmd = saturate(v_cmd, 0.5); // Max 0.5 m/s
+  w_cmd = saturate(w_cmd, 2.0); // Max 2.0 rad/s
+  
+  inverseKinematics(v_cmd, w_cmd);
+}
+
+// ================= SIMULAÇÃO & MAIN =================
+// (Mantive a função de simulação para você testar a lógica sem o robô)
+void simulateHardware(float dt) {
+  float tau = 0.15; // Constante de tempo estimada
+  float K_model = 0.12; // Ganho (rad/s por PWM)
+  
+  for(int i=0; i<4; i++) {
+     // Modelo de 1ª ordem: w' = (-w + K*u)/tau
+     float dw = (-(1.0/tau)*w_motor_meas[i] + (K_model/tau)*pwm_cmd[i]) * dt;
+     w_motor_meas[i] += dw;
+     // Encoder count simulation
+     encoder_ticks[i] += (w_motor_meas[i] * dt / (2*PI)) * CPR;
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("ROBO DIFERENCIAL 2025/2 - PRONTO");
+  // Configurar pinos de motor e encoder aqui
+}
+
+void loop() {
+  unsigned long now = millis();
+  float dt = (now - last_time) / 1000.0;
+  
+  if (dt >= 0.01) { // 100 Hz Loop
+    last_time = now;
+    
+    if (simulation_mode) {
+      simulateHardware(dt);
+    } else {
+      // LEITURA REAL DOS ENCODERS AQUI
+      // calculateEncoderSpeeds();
+    }
+    
+    // Odometria
+    float v_real, w_real;
+    forwardKinematics(w_motor_meas, v_real, w_real);
+    pose[0] += v_real * cos(pose[2]) * dt;
+    pose[1] += v_real * sin(pose[2]) * dt;
+    pose[2] += w_real * dt;
+    
+    // Controle
+    switch(current_mode) {
+      case IDLE: 
+        for(int i=0; i<4; i++) pwm_cmd[i] = 0; 
+        break;
+      case OPEN_LOOP: 
+        // PWM setado via Serial
+        break;
+      case VEL_CONTROL:
+        inverseKinematics(v_lin_ref, w_ang_ref);
+        runSpeedControl(dt);
+        break;
+      case POS_CONTROL:
+        runPositionControl();
+        runSpeedControl(dt);
+        break;
+    }
+    
+    // Envio para os Motores Reais
+    // writeMotors(pwm_cmd);
+
+    processSerial();
+    
+    // Log CSV: Tempo, X, Y, Theta, Ref_Vel, Real_Vel_M1, PWM_M1
+    Serial.print(now/1000.0); Serial.print(",");
+    Serial.print(pose[0]); Serial.print(",");
+    Serial.print(pose[1]); Serial.print(",");
+    Serial.print(pose[2]); Serial.print(",");
+    Serial.print(w_motor_ref[0]); Serial.print(",");
+    Serial.print(w_motor_meas[0]); Serial.print(",");
+    Serial.println(pwm_cmd[0]);
+  }
+}
+
+void processSerial() {
+  if (Serial.available()) {
+    String c = Serial.readStringUntil('\n'); c.trim();
+    if (c.startsWith("SET_MODE")) {
+       if (c.indexOf("VEL")>0) current_mode=VEL_CONTROL;
+       else if (c.indexOf("POS")>0) current_mode=POS_CONTROL;
+       else if (c.indexOf("OPEN")>0) current_mode=OPEN_LOOP;
+       else current_mode=IDLE;
+       for(int i=0; i<4; i++) error_integral[i]=0;
+    }
+    // Ex: SET_VEL 0.3 0.5  (v=0.3 m/s, w=0.5 rad/s)
+    else if (c.startsWith("SET_VEL")) {
+       sscanf(c.c_str(), "SET_VEL %f %f", &v_lin_ref, &w_ang_ref);
+    }
+    // Ex: SET_POS 1.0 0.5 (Ir para X=1.0, Y=0.5)
+    else if (c.startsWith("SET_POS")) {
+       sscanf(c.c_str(), "SET_POS %f %f", &pose_ref[0], &pose_ref[1]);
+    }
+    // Ex: SET_PWM 100 100 100 100 (Teste malha aberta)
+    else if (c.startsWith("SET_PWM")) {
+       float p1, p2, p3, p4;
+       sscanf(c.c_str(), "SET_PWM %f %f %f %f", &p1, &p2, &p3, &p4);
+       pwm_cmd[0]=p1; pwm_cmd[1]=p2; pwm_cmd[2]=p3; pwm_cmd[3]=p4;
+    }
+  }
+}
