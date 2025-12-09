@@ -65,4 +65,4 @@ O robô deve ser capaz de receber uma coordenada $(X, Y)$, girar em direção ao
 * [cite_start][2] M. Crenganis et al., "Mechatronic Design of a Four-Wheel drive mobile robot and differential steering", MATEC Web of Conferences, 2021[cite: 84].
 
 ---
-*Desenvolvido pela equipe [Nome da Equipe] para a disciplina de Sistemas de Controle.*
+*Desenvolvido pela equipe [Los manos] para a disciplina de Sistemas de Controle.*
