@@ -13,13 +13,11 @@ const float L_track = 0.10;  // Distância entre rodas esquerda e direita
 const float CPR = 20.0;     // Pulsos por volta do encoder
 
 // Mapeamento de Pinos (Arduino UNO)
-// ENA/ENB são pinos PWM
 const int PIN_PWM[4] = {10, 11, 12, 13}; 
 const int PIN_DIR1[4] = {2, 4, 6, 8};    
 const int PIN_DIR2[4] = {3, 5, 7, 9};    
 
 // ================= VARIÁVEIS DE CONTROLE =================
-// Referências Globais
 float v_lin_ref = 0;   // Velocidade linear (m/s)
 float w_ang_ref = 0;   // Velocidade angular (rad/s)
 float w_motor_ref[4] = {0, 0, 0, 0};
@@ -86,7 +84,7 @@ void forwardKinematics(float wm[4], float &v, float &w) {
 
 // ================= CONTROLADORES =================
 
-// Controlador de Velocidade (Requisito 2.a e 2.d)
+// Controlador de Velocidade
 void runSpeedControl(float dt) {
   for (int i = 0; i < 4; i++) {
     float error = w_motor_ref[i] - w_motor_meas[i];
@@ -110,7 +108,7 @@ void runSpeedControl(float dt) {
   }
 }
 
-// Controlador de Posição (Requisito 2.b)
+// Controlador de Posição
 // Controlar Distância e Orientação
 void runPositionControl() {
   float dx = pose_ref[0] - pose[0];
