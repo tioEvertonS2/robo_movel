@@ -1,13 +1,12 @@
-/**************************************************************************
- * FIRMWARE ROBÔ MÓVEL - PROJETO 2 (2025/2)
- * - TRAÇÃO DIFERENCIAL (4WD Skid-Steer)
- * - Controle: Posição (Polar) -> Velocidade (PI)
- * - Interface Serial: Comandos SET e LOG
- **************************************************************************/
-
+/*
+ ROBÔ MÓVEL - PROJETO 2 (2025/2)
+  - TRAÇÃO DIFERENCIAL (4WD Skid-Steer)
+  - Controle: Posição (Polar) -> Velocidade (PI)
+  - Interface Serial: Comandos SET e LOG
+*/
 #include <math.h>
 
-// ================= CONFIGURAÇÕES FÍSICAS =================
+// CONFIGURAÇÕES FÍSICAS 
 const float R = 0.066;       // Raio da roda (m)
 const float L_track = 0.10;  // Distância entre rodas esquerda e direita
 const float CPR = 20.0;     // Pulsos por volta do encoder
@@ -17,7 +16,7 @@ const int PIN_PWM[4] = {10, 11, 12, 13};
 const int PIN_DIR1[4] = {2, 4, 6, 8};    
 const int PIN_DIR2[4] = {3, 5, 7, 9};    
 
-// ================= VARIÁVEIS DE CONTROLE =================
+// VARIÁVEIS DE CONTROLE 
 float v_lin_ref = 0;   // Velocidade linear (m/s)
 float w_ang_ref = 0;   // Velocidade angular (rad/s)
 float w_motor_ref[2] = {0, 0};
@@ -47,7 +46,7 @@ bool simulation_mode = true; // Mude para false no robô real
 enum Mode { IDLE, OPEN_LOOP, VEL_CONTROL, POS_CONTROL };
 Mode current_mode = IDLE;
 
-// ================= FUNÇÕES AUXILIARES =================
+// FUNÇÕES AUXILIARES 
 
 float saturate(float val, float limit) {
   if (val > limit) return limit;
@@ -80,11 +79,11 @@ void forwardKinematics(float wm[2], float &v, float &w) {
   w = (R / L_track) * (wr_avg - wl_avg);
 }
 
-// ================= CONTROLADORES =================
+// CONTROLADORES 
 
 // Controlador de Velocidade
 void runSpeedControl(float dt) {
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     float error = w_motor_ref[i] - w_motor_meas[i];
     
     // PI com Anti-Windup Clamping
@@ -149,7 +148,7 @@ void runPositionControl() {
   inverseKinematics(v_cmd, w_cmd);
 }
 
-// ================= SIMULAÇÃO & MAIN =================
+// SIMULAÇÃO & MAIN 
 void simulateHardware(float dt) {
   float tau = 0.15; // Constante de tempo estimada
   float K_model = 0.12; // Ganho (rad/s por PWM)
