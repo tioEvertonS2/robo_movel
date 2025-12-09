@@ -82,30 +82,51 @@ void inverse_kinematics(float v, float w)
 
 
 // ============================================================================
-//                        CONTROLADOR DE POSIÇÃO (P2P)
+//                        CONTROLADOR DE POSIÇÃO (P2P) - ATUALIZADO
 // ============================================================================
 void position_controller()
 {
-    float ex = x_ref - x;
-    float ey = y_ref - y;
+    // 1. Cálculo dos erros
+    float ex = x_ref - x;      //
+    float ey = y_ref - y;      //
+    float dist = sqrt(ex*ex + ey*ey); // Distância até o alvo
 
-    float dist = sqrt(ex*ex + ey*ey);
+    // 2. Zona Morta (Deadband) - Evita vibração no final
+    if (dist < 0.03) { // Se faltar menos de 3cm
+        inverse_kinematics(0, 0); // Para o robô
+        return; 
+    }
 
-    // Controle linear
-    float v = 1.5 * dist;
-    if (v > 0.5) v = 0.5;
-
-    // Controle angular
+    // 3. Cálculo do ângulo desejado
     float desired_theta = atan2(ey, ex);
     float e_theta = desired_theta - theta;
 
-    // Normalizar ângulo
-    while (e_theta > PI) e_theta -= 2*PI;
-    while (e_theta < -PI) e_theta += 2*PI;
+    // 4. Normalização do ângulo (Mantém entre -PI e +PI)
+    while (e_theta > PI) e_theta -= 2*PI;   //
+    while (e_theta < -PI) e_theta += 2*PI;  //
 
-    float w = 3.0 * e_theta;
+    // Variáveis de comando
+    float v = 0;
+    float w = 0;
 
-    inverse_kinematics(v, w);
+    // 5. Lógica de Prioridade de Giro (Histerese)
+    // Se o robô estiver muito desalinhado (> ~28 graus), gira primeiro
+    if (abs(e_theta) > 0.5) { 
+        v = 0; // Não anda para frente, só gira
+        w = 4.0 * e_theta; // Ganho rotacional (Kp_head)
+    } else {
+        // Se já estiver mais ou menos alinhado, anda e corrige
+        v = 1.0 * dist;    // Ganho linear (Kp_dist)
+        w = 4.0 * e_theta; // Mantém correção angular
+    }
+
+    // 6. Saturação (Segurança)
+    if (v > 0.5) v = 0.5;      // Limite velocidade linear
+    if (w > 2.0) w = 2.0;      // Limite velocidade angular
+    if (w < -2.0) w = -2.0;
+
+    // 7. Envia para os motores
+    inverse_kinematics(v, w); //
 }
 
 
