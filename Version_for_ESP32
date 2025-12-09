@@ -1,0 +1,176 @@
+/*
+ ROBÔ MÓVEL - TRAÇÃO DIFERENCIAL (ESP32)
+ Controle: Velocidade (PI) + Posição (P)
+ Apenas 2 encoders (esquerda e direita)
+*/
+
+#include <math.h>
+
+// CONFIGURAÇÕES FÍSICAS 
+const float R = 0.066;
+const float L_track = 0.10;
+const float CPR = 20.0;
+
+// MAPA DE PINOS PARA ESP32
+const int PWM_PIN[2] = {25, 14}; 
+const int DIR1_PIN[2] = {26, 12};
+const int DIR2_PIN[2] = {27, 13};
+
+// ENCODERS
+const int ENC_PIN[2] = {34, 35};  // apenas canal A
+volatile long encoder_ticks[2] = {0, 0};
+
+// PWM ESP32 CONFIG
+const int PWM_CH[2] = {0, 1};
+const int PWM_FREQ = 20000; 
+const int PWM_RES = 10;
+
+// CONTROLE
+float w_motor_ref[2] = {0, 0};
+float w_motor_meas[2] = {0, 0};
+float pwm_cmd[2] = {0, 0};
+float v_lin_ref = 0;
+float w_ang_ref = 0;
+
+float error_integral[2] = {0, 0};
+float Kp_vel = 1.94;
+float Ki_vel = 5.31;
+
+// ODOMETRIA
+float pose[3] = {0, 0, 0};
+float pose_ref[3] = {0, 0, 0};
+
+// SISTEMA
+unsigned long last_time = 0;
+
+// ===== ENCODER ISR =====
+void IRAM_ATTR encLeft()  { encoder_ticks[0]++; }
+void IRAM_ATTR encRight() { encoder_ticks[1]++; }
+
+// =============================================
+// SATURAÇÃO
+float saturate(float v, float lim) {
+  if (v > lim) return lim;
+  if (v < -lim) return -lim;
+  return v;
+}
+
+// =============================================
+// CINEMÁTICA INVERSA
+void inverseKinematics(float v, float w) {
+  float wl = (v - w * (L_track/2)) / R;
+  float wr = (v + w * (L_track/2)) / R;
+  w_motor_ref[0] = wl;
+  w_motor_ref[1] = wr;
+}
+
+// =============================================
+// CINEMÁTICA DIRETA
+void forwardKinematics(float wm[2], float &v, float &w) {
+  v = (R/2.0)*(wm[0] + wm[1]);
+  w = (R/L_track)*(wm[1] - wm[0]);
+}
+
+// =============================================
+// CONTROLADOR DE VELOCIDADE (PI)
+void runSpeedControl(float dt) {
+  for(int i=0; i<2; i++) {
+    float error = w_motor_ref[i] - w_motor_meas[i];
+
+    float P = Kp_vel * error;
+    float int_try = error_integral[i] + error * dt;
+    float u = P + Ki_vel * int_try;
+
+    if (fabs(u) < 1023) {
+      error_integral[i] = int_try;
+    }
+
+    pwm_cmd[i] = saturate(P + Ki_vel * error_integral[i], 1023);
+  }
+}
+
+// =============================================
+// ODOMETRIA + ESTIMAÇÃO DE VELOCIDADE
+void readEncoderSpeeds(float dt) {
+  static long last_ticks[2] = {0, 0};
+  long now_ticks[2];
+
+  now_ticks[0] = encoder_ticks[0];
+  now_ticks[1] = encoder_ticks[1];
+
+  long diffL = now_ticks[0] - last_ticks[0];
+  long diffR = now_ticks[1] - last_ticks[1];
+
+  last_ticks[0] = now_ticks[0];
+  last_ticks[1] = now_ticks[1];
+
+  w_motor_meas[0] = (diffL / CPR) * 2*PI / dt;
+  w_motor_meas[1] = (diffR / CPR) * 2*PI / dt;
+}
+
+// =============================================
+// ATUAR NOS MOTORES (PWM + DIREÇÃO)
+void writeMotors() {
+  for(int i=0; i<2; i++) {
+    int pwm = fabs(pwm_cmd[i]);
+    if (pwm > 1023) pwm = 1023;
+
+    if (pwm_cmd[i] >= 0) {
+      digitalWrite(DIR1_PIN[i], HIGH);
+      digitalWrite(DIR2_PIN[i], LOW);
+    } else {
+      digitalWrite(DIR1_PIN[i], LOW);
+      digitalWrite(DIR2_PIN[i], HIGH);
+    }
+
+    ledcWrite(PWM_CH[i], pwm);
+  }
+}
+
+// =============================================
+// SETUP
+void setup() {
+  Serial.begin(115200);
+
+  for(int i=0; i<2; i++) {
+    pinMode(DIR1_PIN[i], OUTPUT);
+    pinMode(DIR2_PIN[i], OUTPUT);
+
+    ledcSetup(PWM_CH[i], PWM_FREQ, PWM_RES);
+    ledcAttachPin(PWM_PIN[i], PWM_CH[i]);
+  }
+
+  pinMode(ENC_PIN[0], INPUT);
+  pinMode(ENC_PIN[1], INPUT);
+
+  attachInterrupt(ENC_PIN[0], encLeft,  RISING);
+  attachInterrupt(ENC_PIN[1], encRight, RISING);
+
+  last_time = millis();
+}
+
+// =============================================
+// LOOP PRINCIPAL
+void loop() {
+  unsigned long now = millis();
+  float dt = (now - last_time) / 1000.0;
+
+  if (dt >= 0.01) {  // 100 Hz
+    last_time = now;
+
+    readEncoderSpeeds(dt);
+
+    // CINEMÁTICA DIRETA
+    float v_real, w_real;
+    forwardKinematics(w_motor_meas, v_real, w_real);
+
+    pose[0] += v_real * cos(pose[2]) * dt;
+    pose[1] += v_real * sin(pose[2]) * dt;
+    pose[2] += w_real * dt;
+
+    // CONTROLE DE VELOCIDADE
+    inverseKinematics(v_lin_ref, w_ang_ref);
+    runSpeedControl(dt);
+    writeMotors();
+  }
+}
