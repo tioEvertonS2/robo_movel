@@ -20,9 +20,9 @@ const int PIN_DIR2[4] = {3, 5, 7, 9};
 // ================= VARIÁVEIS DE CONTROLE =================
 float v_lin_ref = 0;   // Velocidade linear (m/s)
 float w_ang_ref = 0;   // Velocidade angular (rad/s)
-float w_motor_ref[4] = {0, 0, 0, 0};
-float w_motor_meas[4] = {0, 0, 0, 0};
-float pwm_cmd[4] = {0, 0, 0, 0};
+float w_motor_ref[2] = {0, 0};
+float w_motor_meas[2] = {0, 0};
+float pwm_cmd[2] = {0, 0};
 
 // Odometria (X, Y, Theta)
 float pose[3] = {0, 0, 0}; 
@@ -32,7 +32,7 @@ float pose_ref[3] = {0, 0, 0}; // Destino
 // Ganhos PI de Velocidade (Requisito: Ts < 100ms)
 float Kp_vel = 1.94; 
 float Ki_vel = 5.31;
-float error_integral[4] = {0, 0, 0, 0};
+float error_integral[2] = {0, 0};
 
 // Ganhos de Posição (P)
 float Kp_dist = 2.0; // Ganho de aproximação
@@ -63,20 +63,18 @@ void inverseKinematics(float v, float w) {
   float wl = (v - w * (L_track / 2.0)) / R;
   float wr = (v + w * (L_track / 2.0)) / R;
 
-  // Motores Esquerdos (0 e 2)
-  w_motor_ref[0] = wl; 
-  w_motor_ref[2] = wl;
+  // Motor Esquerdo
+  w_motor_ref[0] = wl; //Lateral Esquerda
   
-  // Motores Direitos (1 e 3)
-  w_motor_ref[1] = wr;
-  w_motor_ref[3] = wr;
+  // Motor Direito
+  w_motor_ref[1] = wr; //Lateral Direita
 }
 
 // Cinemática Direta: (w_motors) -> (v, w)
-void forwardKinematics(float wm[4], float &v, float &w) {
+void forwardKinematics(float wm[2], float &v, float &w) {
   // Média das esquerdas e direitas
-  float wl_avg = (wm[0] + wm[2]) / 2.0;
-  float wr_avg = (wm[1] + wm[3]) / 2.0;
+  float wl_avg = wm[0];
+  float wr_avg = wm[1];
   
   v = (R / 2.0) * (wl_avg + wr_avg);
   w = (R / L_track) * (wr_avg - wl_avg);
